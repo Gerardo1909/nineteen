@@ -1,0 +1,45 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets and local config
+.env
+.env.*
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*~
+*.bak
+
+# Dev tools cache
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Test coverage
+.coverage
+htmlcov/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Claude Code local config
+.claude/
+
+# Compiled extensions
+*.so
+*.pyd
+
+# Logs
+*.log

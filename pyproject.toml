@@ -1,0 +1,27 @@
+[project]
+name = "nineteen"
+version = "0.1.0"
+description = "Lightweight local AI agent made specially for running in poor pc's"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ollama>=0.4.0",
+    "click>=8.1.0",
+]
+license = "MIT"
+authors = [
+    {name = "Gerardo Toboso", email = "gerardotoboso1909@gmail.com"}
+]
+maintainers = [
+    {name = "Gerardo Toboso", email = "gerardotoboso1909@gmail.com"}
+]
+
+[project.scripts]
+nineteen = "nineteen.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nineteen"]
