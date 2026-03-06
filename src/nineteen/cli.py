@@ -1,4 +1,5 @@
-"""Interfaz de línea de comandos del agente nineteen.
+"""
+Interfaz de línea de comandos del agente nineteen.
 
 Expone dos modos de uso mediante Click:
 
@@ -46,8 +47,20 @@ DEFAULT_MODEL = "lfm2.5-thinking:1.2b"
     hidden=True,
     help="Print <think> blocks to stderr (dev mode).",
 )
+@click.option(
+    "--no-approval",
+    is_flag=True,
+    default=False,
+    help="Skip interactive approval for destructive tools.",
+)
 @click.pass_context
-def main(ctx: click.Context, model: str, max_steps: int, show_thinking: bool) -> None:
+def main(
+    ctx: click.Context,
+    model: str,
+    max_steps: int,
+    show_thinking: bool,
+    no_approval: bool,
+) -> None:
     """nineteen — lightweight local AI agent powered by Ollama.
 
     Opciones disponibles:
@@ -55,6 +68,7 @@ def main(ctx: click.Context, model: str, max_steps: int, show_thinking: bool) ->
     \b
     --model / -m          Modelo Ollama a usar (o NINETEEN_MODEL env var).
     --max-steps           Límite de pasos por tarea (default: 10).
+    --no-approval         Omitir confirmación para herramientas destructivas.
     -V / --version        Muestra la versión y sale.
     -h / --help           Muestra este mensaje y sale.
 
@@ -64,9 +78,10 @@ def main(ctx: click.Context, model: str, max_steps: int, show_thinking: bool) ->
     ctx.obj["model"] = model
     ctx.obj["max_steps"] = max_steps
     ctx.obj["show_thinking"] = show_thinking
+    ctx.obj["no_approval"] = no_approval
 
     if ctx.invoked_subcommand is None:
-        _interactive(model, max_steps, show_thinking)
+        _interactive(model, max_steps, show_thinking, no_approval)
 
 
 @main.command()
@@ -85,6 +100,12 @@ def main(ctx: click.Context, model: str, max_steps: int, show_thinking: bool) ->
     help="Maximum agentic steps (overrides parent option).",
 )
 @click.option("--show-thinking", is_flag=True, default=False, hidden=True)
+@click.option(
+    "--no-approval",
+    is_flag=True,
+    default=False,
+    help="Skip interactive approval for destructive tools.",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -92,6 +113,7 @@ def run(
     model: str | None,
     max_steps: int | None,
     show_thinking: bool,
+    no_approval: bool,
 ) -> None:
     """Ejecuta una tarea en modo one-shot y sale.
 
@@ -103,24 +125,35 @@ def run(
     effective_model = model or obj.get("model", DEFAULT_MODEL)
     effective_steps = max_steps or obj.get("max_steps", 10)
     effective_thinking = show_thinking or obj.get("show_thinking", False)
+    effective_no_approval = no_approval or obj.get("no_approval", False)
 
-    agent = _make_agent(effective_model, effective_thinking, effective_steps)
+    agent = _make_agent(
+        effective_model,
+        effective_thinking,
+        effective_steps,
+        no_approval=effective_no_approval,
+    )
     if agent is None:
         sys.exit(1)
     agent.run(task)
 
 
-def _interactive(model: str, max_steps: int, show_thinking: bool) -> None:
+def _interactive(
+    model: str, max_steps: int, show_thinking: bool, no_approval: bool = False
+) -> None:
     """Inicia el modo interactivo: muestra el banner y lanza el REPL del agente.
 
     Args:
         model: Nombre del modelo Ollama a usar.
         max_steps: Límite de pasos agenticos por tarea.
         show_thinking: Si es ``True``, imprime bloques ``<think>`` por stderr.
+        no_approval: Si es ``True``, omite la confirmacion para herramientas destructivas.
     """
     registry = build_default_registry()
     print_banner(model, len(registry))
-    agent = _make_agent(model, show_thinking, max_steps, registry=registry)
+    agent = _make_agent(
+        model, show_thinking, max_steps, registry=registry, no_approval=no_approval
+    )
     if agent is None:
         sys.exit(1)
     agent.chat_loop()
@@ -131,6 +164,7 @@ def _make_agent(
     show_thinking: bool,
     max_steps: int,
     registry=None,
+    no_approval: bool = False,
 ) -> Agent | None:
     """Construye y retorna una instancia del agente, o ``None`` en caso de error.
 
@@ -143,6 +177,7 @@ def _make_agent(
         show_thinking: Si es ``True``, imprime bloques ``<think>`` por stderr.
         max_steps: Límite de pasos agenticos por tarea.
         registry: Registry de herramientas. Si es ``None``, se usa el por defecto.
+        no_approval: Si es ``True``, omite la confirmacion para herramientas destructivas.
 
     Returns:
         Instancia de ``Agent`` lista para usar, o ``None`` si hay un error de importación.
@@ -162,6 +197,7 @@ def _make_agent(
             show_thinking=show_thinking,
             max_steps=max_steps,
             registry=registry,
+            approval=not no_approval,
         )
     except ImportError as e:
         print_error(f"Import error: {e}")

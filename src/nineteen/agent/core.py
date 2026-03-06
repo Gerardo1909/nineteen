@@ -1,4 +1,5 @@
-"""Núcleo del agente nineteen: bucle agentico con tool calling nativo de Ollama.
+"""
+Núcleo del agente nineteen: bucle agentico con tool calling nativo de Ollama.
 
 El agente mantiene un historial de mensajes y ejecuta herramientas en un bucle
 hasta que el modelo produce una respuesta final (sin tool calls) o se alcanza
@@ -24,12 +25,25 @@ from nineteen.display import (
     print_tool_call,
     print_tool_result,
     print_warning,
+    prompt_approval,
 )
 from nineteen.prompts import build_system_prompt
 from nineteen.tools import ToolRegistry, _build_tools_schema, build_default_registry
 
 MAX_RESULT_LEN = 2000
 """Longitud máxima del resultado de una herramienta antes de truncarlo."""
+
+_TOOLS_REQUIRING_APPROVAL: frozenset[str] = frozenset(
+    {
+        "write_file",
+        "delete_file",
+        "rename_file",
+        "copy_file",
+        "make_dir",
+        "run_command",
+    }
+)
+"""Herramientas que requieren aprobacion del usuario antes de ejecutarse."""
 
 
 class Agent:
@@ -51,6 +65,7 @@ class Agent:
         show_thinking: bool = False,
         max_steps: int = 10,
         registry: ToolRegistry | None = None,
+        approval: bool = True,
     ) -> None:
         """Inicializa el agente con modelo y configuración opcionales.
 
@@ -62,13 +77,17 @@ class Agent:
             max_steps: Número máximo de iteraciones del bucle agentico.
                 Evita bucles infinitos en caso de que el modelo no converja.
             registry: Registro de herramientas a usar. Si es ``None``, se
-                construye el registry por defecto con las 5 herramientas de filesystem.
+                construye el registry por defecto con las herramientas de filesystem.
+            approval: Si es ``True``, pide confirmacion al usuario antes de ejecutar
+                herramientas destructivas. Usar ``False`` para modo no interactivo.
         """
         self.model = model
         self.show_thinking = show_thinking
         self.max_steps = max_steps
         self.registry = registry or build_default_registry()
         self._tools_schema = _build_tools_schema(self.registry)
+        self._approval = approval
+        self._always_approved: set[str] = set()
 
     def run(self, task: str) -> None:
         """Ejecuta una tarea en modo one-shot hasta completarla o alcanzar max_steps.
@@ -163,6 +182,22 @@ class Agent:
                 args = tc.function.arguments  # ya es un dict desde el SDK
 
                 print_tool_call(name, args)
+
+                # Approval gate para herramientas destructivas
+                if (
+                    self._approval
+                    and name in _TOOLS_REQUIRING_APPROVAL
+                    and name not in self._always_approved
+                ):
+                    choice = prompt_approval(name, args)
+                    if choice == "n":
+                        result = f"DENIED: User denied execution of {name}"
+                        print_tool_result(result)
+                        messages.append({"role": "tool", "content": result})
+                        continue
+                    elif choice == "a":
+                        self._always_approved.add(name)
+
                 result = self.registry.call(name, args)
                 result = result[:MAX_RESULT_LEN]
                 print_tool_result(result)
