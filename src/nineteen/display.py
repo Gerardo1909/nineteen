@@ -1,4 +1,5 @@
-"""Capa de presentación del agente nineteen: salida ANSI, logo y feedback de herramientas.
+"""
+Capa de presentación del agente nineteen: salida ANSI, logo y feedback de herramientas.
 
 Centraliza toda la salida al terminal para mantener el resto del código limpio
 de lógica de presentación. Usa códigos ANSI directos (sin dependencias externas).
@@ -130,3 +131,32 @@ def print_warning(msg: str) -> None:
         msg: Mensaje de advertencia a mostrar.
     """
     print(f"\n{YELLOW}⚠  {msg}{RESET}\n", flush=True)
+
+
+def prompt_approval(name: str, args: dict[str, Any]) -> str:
+    """Pide confirmacion al usuario antes de ejecutar una herramienta destructiva.
+
+    Muestra las 3 opciones y espera input. Enter sin texto equivale a "y".
+    EOF o Ctrl-C equivalen a "n" (denegar).
+
+    Args:
+        name: Nombre de la herramienta que requiere aprobacion.
+        args: Argumentos de la llamada a la herramienta.
+
+    Returns:
+        ``"y"`` (si), ``"n"`` (no), o ``"a"`` (si, siempre para esta herramienta).
+    """
+    args_repr = ", ".join(f"{k}={repr(v)[:60]}" for k, v in args.items())
+    print(f"{YELLOW}⚠  ¿Ejecutar {WHITE}{name}({args_repr}){YELLOW}?{RESET}")
+    print(
+        f"   {GREEN}[y]{RESET} Sí   {RED}[n]{RESET} No   "
+        f"{CYAN}[a]{RESET} Sí, siempre para {name}"
+    )
+
+    while True:
+        try:
+            choice = input(f"   {DIM}>{RESET} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "n"
+        if choice in ("y", "n", "a", ""):
+            return choice or "y"
