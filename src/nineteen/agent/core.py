@@ -22,6 +22,7 @@ import sys
 import ollama
 
 from nineteen.display import (
+    Spinner,
     print_tool_call,
     print_tool_result,
     print_warning,
@@ -66,6 +67,7 @@ class Agent:
         max_steps: int = 10,
         registry: ToolRegistry | None = None,
         approval: bool = True,
+        stream: bool = True,
     ) -> None:
         """Inicializa el agente con modelo y configuración opcionales.
 
@@ -80,6 +82,8 @@ class Agent:
                 construye el registry por defecto con las herramientas de filesystem.
             approval: Si es ``True``, pide confirmacion al usuario antes de ejecutar
                 herramientas destructivas. Usar ``False`` para modo no interactivo.
+            stream: Si es ``True``, muestra tokens progresivamente y spinner
+                durante thinking. Si es ``False``, espera la respuesta completa.
         """
         self.model = model
         self.show_thinking = show_thinking
@@ -88,6 +92,7 @@ class Agent:
         self._tools_schema = _build_tools_schema(self.registry)
         self._approval = approval
         self._always_approved: set[str] = set()
+        self._stream = stream
 
     def run(self, task: str) -> None:
         """Ejecuta una tarea en modo one-shot hasta completarla o alcanzar max_steps.
@@ -152,8 +157,8 @@ class Agent:
                 sys.stderr.flush()
 
             if not tool_calls:
-                # Respuesta final
-                if content:
+                # Respuesta final — solo imprimir si no se streameó
+                if content and not self._stream:
                     sys.stdout.write(content)
                     sys.stdout.write("\n")
                     sys.stdout.flush()
@@ -214,11 +219,11 @@ class Agent:
         return messages
 
     def _call(self, messages: list[dict]) -> tuple[str, str, list]:
-        """Realiza una llamada no-streaming a Ollama con tool calling nativo.
+        """Realiza una llamada streaming a Ollama con tool calling nativo.
 
-        Envía el historial completo al modelo con el esquema de herramientas.
-        La respuesta puede contener contenido de texto, bloque de razonamiento
-        (``thinking``) y/o tool calls.
+        Siempre usa ``stream=True`` internamente. Si ``self._stream`` es ``True``,
+        muestra un spinner braille durante thinking e imprime tokens progresivamente.
+        Si es ``False``, acumula todo silenciosamente (comportamiento original).
 
         Args:
             messages: Historial de mensajes a enviar al modelo.
@@ -229,13 +234,44 @@ class Agent:
             - ``thinking``: Bloque de razonamiento interno (puede ser vacío).
             - ``tool_calls``: Lista de tool calls del SDK de Ollama (puede ser vacía).
         """
-        resp = ollama.chat(
+        content_parts: list[str] = []
+        thinking_parts: list[str] = []
+        tool_calls: list = []
+
+        spinner = Spinner("pensando") if self._stream else None
+        content_started = False
+
+        for chunk in ollama.chat(
             model=self.model,
             messages=messages,
             tools=self._tools_schema,
             options={"temperature": 0},
-        )
-        content = resp.message.content or ""
-        thinking = resp.message.thinking or ""
-        tool_calls = resp.message.tool_calls or []
+            stream=True,
+        ):
+            if chunk.message.thinking:
+                thinking_parts.append(chunk.message.thinking)
+                if spinner and not content_started:
+                    spinner.tick()
+
+            if chunk.message.content:
+                if spinner and not content_started:
+                    spinner.clear()
+                    content_started = True
+                content_parts.append(chunk.message.content)
+                if self._stream:
+                    sys.stdout.write(chunk.message.content)
+                    sys.stdout.flush()
+
+            if chunk.message.tool_calls:
+                if spinner and not content_started:
+                    spinner.clear()
+                    content_started = True
+                tool_calls.extend(chunk.message.tool_calls)
+
+        if self._stream and content_started:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
+        content = "".join(content_parts)
+        thinking = "".join(thinking_parts)
         return content, thinking, tool_calls

@@ -53,6 +53,12 @@ DEFAULT_MODEL = "lfm2.5-thinking:1.2b"
     default=False,
     help="Skip interactive approval for destructive tools.",
 )
+@click.option(
+    "--no-stream",
+    is_flag=True,
+    default=False,
+    help="Disable streaming output (wait for full response).",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -60,6 +66,7 @@ def main(
     max_steps: int,
     show_thinking: bool,
     no_approval: bool,
+    no_stream: bool,
 ) -> None:
     """nineteen — lightweight local AI agent powered by Ollama.
 
@@ -69,6 +76,7 @@ def main(
     --model / -m          Modelo Ollama a usar (o NINETEEN_MODEL env var).
     --max-steps           Límite de pasos por tarea (default: 10).
     --no-approval         Omitir confirmación para herramientas destructivas.
+    --no-stream           Deshabilitar streaming (esperar respuesta completa).
     -V / --version        Muestra la versión y sale.
     -h / --help           Muestra este mensaje y sale.
 
@@ -79,9 +87,10 @@ def main(
     ctx.obj["max_steps"] = max_steps
     ctx.obj["show_thinking"] = show_thinking
     ctx.obj["no_approval"] = no_approval
+    ctx.obj["no_stream"] = no_stream
 
     if ctx.invoked_subcommand is None:
-        _interactive(model, max_steps, show_thinking, no_approval)
+        _interactive(model, max_steps, show_thinking, no_approval, no_stream)
 
 
 @main.command()
@@ -106,6 +115,12 @@ def main(
     default=False,
     help="Skip interactive approval for destructive tools.",
 )
+@click.option(
+    "--no-stream",
+    is_flag=True,
+    default=False,
+    help="Disable streaming output (wait for full response).",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -114,6 +129,7 @@ def run(
     max_steps: int | None,
     show_thinking: bool,
     no_approval: bool,
+    no_stream: bool,
 ) -> None:
     """Ejecuta una tarea en modo one-shot y sale.
 
@@ -126,12 +142,14 @@ def run(
     effective_steps = max_steps or obj.get("max_steps", 10)
     effective_thinking = show_thinking or obj.get("show_thinking", False)
     effective_no_approval = no_approval or obj.get("no_approval", False)
+    effective_no_stream = no_stream or obj.get("no_stream", False)
 
     agent = _make_agent(
         effective_model,
         effective_thinking,
         effective_steps,
         no_approval=effective_no_approval,
+        no_stream=effective_no_stream,
     )
     if agent is None:
         sys.exit(1)
@@ -139,7 +157,11 @@ def run(
 
 
 def _interactive(
-    model: str, max_steps: int, show_thinking: bool, no_approval: bool = False
+    model: str,
+    max_steps: int,
+    show_thinking: bool,
+    no_approval: bool = False,
+    no_stream: bool = False,
 ) -> None:
     """Inicia el modo interactivo: muestra el banner y lanza el REPL del agente.
 
@@ -148,11 +170,13 @@ def _interactive(
         max_steps: Límite de pasos agenticos por tarea.
         show_thinking: Si es ``True``, imprime bloques ``<think>`` por stderr.
         no_approval: Si es ``True``, omite la confirmacion para herramientas destructivas.
+        no_stream: Si es ``True``, deshabilita el streaming progresivo.
     """
     registry = build_default_registry()
     print_banner(model, len(registry))
     agent = _make_agent(
-        model, show_thinking, max_steps, registry=registry, no_approval=no_approval
+        model, show_thinking, max_steps, registry=registry,
+        no_approval=no_approval, no_stream=no_stream,
     )
     if agent is None:
         sys.exit(1)
@@ -165,6 +189,7 @@ def _make_agent(
     max_steps: int,
     registry=None,
     no_approval: bool = False,
+    no_stream: bool = False,
 ) -> Agent | None:
     """Construye y retorna una instancia del agente, o ``None`` en caso de error.
 
@@ -178,6 +203,7 @@ def _make_agent(
         max_steps: Límite de pasos agenticos por tarea.
         registry: Registry de herramientas. Si es ``None``, se usa el por defecto.
         no_approval: Si es ``True``, omite la confirmacion para herramientas destructivas.
+        no_stream: Si es ``True``, deshabilita el streaming progresivo.
 
     Returns:
         Instancia de ``Agent`` lista para usar, o ``None`` si hay un error de importación.
@@ -198,6 +224,7 @@ def _make_agent(
             max_steps=max_steps,
             registry=registry,
             approval=not no_approval,
+            stream=not no_stream,
         )
     except ImportError as e:
         print_error(f"Import error: {e}")
