@@ -43,6 +43,36 @@ _LOGO_LINES = [
 """Logo ASCII de 7 filas con los dígitos '1' y '9' en bloques de píxeles."""
 
 
+_BRAILLE_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+"""Secuencia de caracteres braille para la animación del spinner."""
+
+
+class Spinner:
+    """Spinner braille que se actualiza manualmente con tick().
+
+    Cada chunk de thinking del modelo es un evento natural para avanzar el frame.
+    Sin threading, sin timers — complejidad cero.
+
+    Escribe a stderr para no contaminar stdout (importante si el usuario hace pipe).
+    """
+
+    def __init__(self, label: str = "pensando") -> None:
+        self._label = label
+        self._frame = 0
+
+    def tick(self) -> None:
+        """Avanza un frame del spinner y lo imprime en stderr."""
+        char = _BRAILLE_FRAMES[self._frame % len(_BRAILLE_FRAMES)]
+        sys.stderr.write(f"\r{DIM}{CYAN}{char} {self._label}...{RESET}")
+        sys.stderr.flush()
+        self._frame += 1
+
+    def clear(self) -> None:
+        """Borra la línea del spinner de stderr."""
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
+
+
 def print_banner(model: str, tool_count: int) -> None:
     """Imprime el banner de bienvenida con el logo pixelado "19".
 
