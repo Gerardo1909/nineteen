@@ -1,5 +1,5 @@
 """
-Núcleo del agente nineteen: bucle agentico con tool calling nativo de Ollama.
+Núcleo del agente nineteen: bucle agéntico con tool calling nativo.
 
 El agente mantiene un historial de mensajes y ejecuta herramientas en un bucle
 hasta que el modelo produce una respuesta final (sin tool calls) o se alcanza
@@ -7,19 +7,16 @@ el límite de pasos.
 
 Flujo general:
     1. Se construye el historial con el system prompt.
-    2. Se llama a Ollama con el historial y el esquema de herramientas.
+    2. Se delega la llamada al ``LLMProvider`` inyectado.
     3. Si la respuesta contiene tool calls → se ejecutan y se agregan los
        resultados al historial, luego se repite desde 2.
     4. Si no hay tool calls → se imprime la respuesta final y se detiene.
-
-Dependencias externas: ``ollama`` (cliente oficial de Ollama).
 """
 
 from __future__ import annotations
 
 import sys
-
-import ollama
+from typing import Optional
 
 from nineteen.display import (
     Spinner,
@@ -29,7 +26,8 @@ from nineteen.display import (
     prompt_approval,
 )
 from nineteen.prompts import build_system_prompt
-from nineteen.tools import ToolRegistry, _build_tools_schema, build_default_registry
+from nineteen.providers.base import LLMProvider
+from nineteen.tools import ToolRegistry, build_default_registry
 
 MAX_RESULT_LEN = 2000
 """Longitud máxima del resultado de una herramienta antes de truncarlo."""
@@ -48,35 +46,37 @@ _TOOLS_REQUIRING_APPROVAL: frozenset[str] = frozenset(
 
 
 class Agent:
-    """Agente conversacional con capacidad de ejecutar herramientas de filesystem.
+    """
+    Agente conversacional con capacidad de ejecutar herramientas de filesystem.
 
-    Encapsula el bucle agentico completo: llamadas a Ollama, ejecución de
-    herramientas y mantenimiento del historial de mensajes.
+    Encapsula el bucle agéntico completo: delega las llamadas LLM al proveedor
+    inyectado, ejecuta herramientas y mantiene el historial de mensajes.
 
     Attributes:
-        model: Nombre del modelo Ollama a usar.
         show_thinking: Si es ``True``, imprime el bloque ``<think>`` por stderr.
-        max_steps: Máximo de pasos del bucle agentico por tarea.
+        max_steps: Máximo de pasos del bucle agéntico por tarea.
         registry: Registro de herramientas disponibles para el agente.
     """
 
     def __init__(
         self,
-        model: str = "lfm2.5-thinking:1.2b",
+        provider: LLMProvider,
         show_thinking: bool = False,
         max_steps: int = 10,
-        registry: ToolRegistry | None = None,
+        registry: Optional[ToolRegistry] = None,
         approval: bool = True,
         stream: bool = True,
     ) -> None:
-        """Inicializa el agente con modelo y configuración opcionales.
+        """
+        Inicializa el agente con el proveedor LLM y configuración opcionales.
 
         Args:
-            model: Nombre del modelo Ollama (debe estar disponible localmente).
-                Por defecto usa ``"lfm2.5-thinking:1.2b"``.
+            provider: Instancia que implementa el protocolo ``LLMProvider``.
+                El proveedor debe haber sido construido con el mismo ``registry``
+                para que el esquema de herramientas coincida.
             show_thinking: Si es ``True``, imprime el bloque de razonamiento
                 interno del modelo por ``stderr``. Útil para depuración.
-            max_steps: Número máximo de iteraciones del bucle agentico.
+            max_steps: Número máximo de iteraciones del bucle agéntico.
                 Evita bucles infinitos en caso de que el modelo no converja.
             registry: Registro de herramientas a usar. Si es ``None``, se
                 construye el registry por defecto con las herramientas de filesystem.
@@ -85,17 +85,17 @@ class Agent:
             stream: Si es ``True``, muestra tokens progresivamente y spinner
                 durante thinking. Si es ``False``, espera la respuesta completa.
         """
-        self.model = model
+        self._provider = provider
         self.show_thinking = show_thinking
         self.max_steps = max_steps
         self.registry = registry or build_default_registry()
-        self._tools_schema = _build_tools_schema(self.registry)
         self._approval = approval
         self._always_approved: set[str] = set()
         self._stream = stream
 
     def run(self, task: str) -> None:
-        """Ejecuta una tarea en modo one-shot hasta completarla o alcanzar max_steps.
+        """
+        Ejecuta una tarea en modo one-shot hasta completarla o alcanzar max_steps.
 
         Crea un historial nuevo con el system prompt y la tarea del usuario,
         ejecuta el bucle agentico y retorna al terminar.
@@ -110,7 +110,8 @@ class Agent:
         self._loop(messages)
 
     def chat_loop(self) -> None:
-        """Inicia el REPL interactivo. Mantiene el historial entre turnos.
+        """
+        Inicia el REPL interactivo. Mantiene el historial entre turnos.
 
         Lee entrada del usuario en un bucle, ejecuta el agente y muestra
         la respuesta. Se detiene cuando el usuario escribe ``exit``, ``quit``
@@ -136,7 +137,8 @@ class Agent:
             print("\n")
 
     def _loop(self, messages: list[dict]) -> list[dict]:
-        """Ejecuta el bucle agentico hasta una respuesta final o max_steps.
+        """
+        Ejecuta el bucle agentico hasta una respuesta final o max_steps.
 
         En cada iteración:
         1. Llama a Ollama con el historial actual.
@@ -219,20 +221,20 @@ class Agent:
         return messages
 
     def _call(self, messages: list[dict]) -> tuple[str, str, list]:
-        """Realiza una llamada streaming a Ollama con tool calling nativo.
+        """
+        Delega una llamada al proveedor LLM y normaliza la respuesta en streaming.
 
-        Siempre usa ``stream=True`` internamente. Si ``self._stream`` es ``True``,
-        muestra un spinner braille durante thinking e imprime tokens progresivamente.
-        Si es ``False``, acumula todo silenciosamente (comportamiento original).
+        Si ``self._stream`` es ``True``, muestra un spinner braille durante thinking
+        e imprime tokens progresivamente. Si es ``False``, acumula silenciosamente.
 
         Args:
-            messages: Historial de mensajes a enviar al modelo.
+            messages: Historial de mensajes a enviar al proveedor.
 
         Returns:
             Tupla ``(content, thinking, tool_calls)`` donde:
             - ``content``: Texto de la respuesta del asistente (puede ser vacío).
             - ``thinking``: Bloque de razonamiento interno (puede ser vacío).
-            - ``tool_calls``: Lista de tool calls del SDK de Ollama (puede ser vacía).
+            - ``tool_calls``: Lista de ``ToolCallData`` (puede ser vacía).
         """
         content_parts: list[str] = []
         thinking_parts: list[str] = []
@@ -241,32 +243,26 @@ class Agent:
         spinner = Spinner("pensando") if self._stream else None
         content_started = False
 
-        for chunk in ollama.chat(
-            model=self.model,
-            messages=messages,
-            tools=self._tools_schema,
-            options={"temperature": 0},
-            stream=True,
-        ):
-            if chunk.message.thinking:
-                thinking_parts.append(chunk.message.thinking)
+        for chunk in self._provider.chat_stream(messages):
+            if chunk.thinking:
+                thinking_parts.append(chunk.thinking)
                 if spinner and not content_started:
                     spinner.tick()
 
-            if chunk.message.content:
+            if chunk.content:
                 if spinner and not content_started:
                     spinner.clear()
                     content_started = True
-                content_parts.append(chunk.message.content)
+                content_parts.append(chunk.content)
                 if self._stream:
-                    sys.stdout.write(chunk.message.content)
+                    sys.stdout.write(chunk.content)
                     sys.stdout.flush()
 
-            if chunk.message.tool_calls:
+            if chunk.tool_calls:
                 if spinner and not content_started:
                     spinner.clear()
                     content_started = True
-                tool_calls.extend(chunk.message.tool_calls)
+                tool_calls.extend(chunk.tool_calls)
 
         if self._stream and content_started:
             sys.stdout.write("\n")

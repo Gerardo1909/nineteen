@@ -1,7 +1,9 @@
-"""Sistema de herramientas pluggable para el agente nineteen.
+"""
+Sistema de herramientas pluggable para el agente nineteen.
 
-Provee las abstracciones base (`ToolSpec`, `ToolRegistry`) y las utilidades
-para convertir el registro al esquema de herramientas nativo de Ollama.
+Provee las abstracciones base (``ToolSpec``, ``ToolRegistry``) para registrar
+y ejecutar herramientas. La conversión al esquema de wire de cada proveedor
+es responsabilidad del adaptador correspondiente (ver ``providers/ollama.py``).
 
 Dependencias: ninguna (solo stdlib).
 """
@@ -10,18 +12,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable
-
-_TYPE_MAP: dict[str, str] = {
-    "str": "string",
-    "int": "integer",
-    "float": "number",
-    "bool": "boolean",
-}
-"""Conversión de nombres de tipo Python a tipos JSON Schema.
-
-Solo cubre los tipos primitivos utilizados en las firmas de herramientas.
-Cualquier tipo no listado aquí se mapea a ``"string"`` por defecto.
-"""
 
 
 @dataclass
@@ -115,70 +105,3 @@ class ToolRegistry:
             return f"ERROR: Wrong arguments for '{name}': {e}"
         except Exception as e:
             return f"ERROR: Tool '{name}' failed: {e}"
-
-
-def _build_tools_schema(registry: ToolRegistry) -> list[dict]:
-    """Convierte un ``ToolRegistry`` al formato de herramientas nativo de Ollama.
-
-    Ollama espera una lista de objetos con estructura ``{"type": "function", "function": {...}}``.
-    Esta funcion genera esa lista a partir de los ``ToolSpec`` registrados.
-
-    Args:
-        registry: Registro de herramientas a convertir.
-
-    Returns:
-        Lista de diccionarios en formato ``tools`` compatible con ``ollama.chat()``.
-    """
-    tools = []
-    for spec in registry._tools.values():
-        params = _parse_signature(spec.signature)
-        required = [name for name, (_type, optional) in params.items() if not optional]
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": spec.name,
-                    "description": spec.description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            p_name: {"type": p_type, "description": p_name}
-                            for p_name, (p_type, _opt) in params.items()
-                        },
-                        "required": required,
-                    },
-                },
-            }
-        )
-    return tools
-
-
-def _parse_signature(sig: str) -> dict[str, tuple[str, bool]]:
-    """Parsea una firma de parametros a un diccionario nombre -> (tipo, opcional).
-
-    Usa el sufijo ``?`` en el tipo para marcar parametros opcionales.
-    Por ejemplo: ``"path: str, max_depth: int?"`` marca ``max_depth`` como opcional.
-
-    Args:
-        sig: Cadena con formato ``"param: tipo, param2: tipo2?"``
-            (p. ej. ``"path: str, count: int?"``).
-
-    Returns:
-        Diccionario ``{nombre_param: (tipo_json_schema, es_opcional)}``.
-        Tipos no reconocidos se mapean a ``"string"``.
-
-    Example:
-        >>> _parse_signature("path: str, count: int?")
-        {'path': ('string', False), 'count': ('integer', True)}
-    """
-    result = {}
-    for part in sig.split(","):
-        part = part.strip()
-        if ":" in part:
-            name, type_hint = part.split(":", 1)
-            py_type = type_hint.strip()
-            optional = py_type.endswith("?")
-            if optional:
-                py_type = py_type[:-1]
-            result[name.strip()] = (_TYPE_MAP.get(py_type, "string"), optional)
-    return result

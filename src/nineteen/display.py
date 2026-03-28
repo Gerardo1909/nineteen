@@ -99,6 +99,10 @@ def print_banner(model: str, tool_count: int) -> None:
         f"  Escribe {WHITE}'exit'{RESET}{CYAN} o {WHITE}Ctrl-C{RESET}{CYAN} para salir",
         width,
     )
+    _banner_line(
+        f"  {DIM}→ best model for your CPU: canirun.ai{RESET}{CYAN}",
+        width,
+    )
     print(f"{CYAN}└{border}┘{RESET}\n")
 
 
