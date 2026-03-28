@@ -18,9 +18,10 @@ import click
 from nineteen import __version__
 from nineteen.agent import Agent
 from nineteen.display import print_banner, print_error
+from nineteen.providers import OllamaProvider
 from nineteen.tools import build_default_registry
 
-DEFAULT_MODEL = "lfm2.5-thinking:1.2b"
+DEFAULT_MODEL = "qwen3:0.6b"
 """Modelo Ollama usado por defecto si no se especifica uno."""
 
 
@@ -193,14 +194,14 @@ def _make_agent(
 ) -> Agent | None:
     """Construye y retorna una instancia del agente, o ``None`` en caso de error.
 
-    Intenta verificar que el modelo esté disponible en Ollama antes de crear
-    el agente. Si la verificación falla, igual intenta construir el agente
-    (el error real surgirá en la primera llamada al modelo).
+    Crea el registry (si no se provee), luego el ``OllamaProvider`` y finalmente
+    el ``Agent``. El mismo registry se pasa a ambos para que el esquema de
+    herramientas coincida con el registro de ejecución.
 
     Args:
         model: Nombre del modelo Ollama a usar.
         show_thinking: Si es ``True``, imprime bloques ``<think>`` por stderr.
-        max_steps: Límite de pasos agenticos por tarea.
+        max_steps: Límite de pasos agénticos por tarea.
         registry: Registry de herramientas. Si es ``None``, se usa el por defecto.
         no_approval: Si es ``True``, omite la confirmacion para herramientas destructivas.
         no_stream: Si es ``True``, deshabilita el streaming progresivo.
@@ -208,18 +209,12 @@ def _make_agent(
     Returns:
         Instancia de ``Agent`` lista para usar, o ``None`` si hay un error de importación.
     """
+    if registry is None:
+        registry = build_default_registry()
     try:
-        import ollama as _ollama
-
-        _ollama.show(model)  # verificar que el modelo esté disponible
-    except Exception:
-        pass  # Si show() falla, igual intentamos; el error real surge en el primer chat
-
-    try:
-        from nineteen.agent import Agent
-
+        provider = OllamaProvider(model=model, registry=registry)
         return Agent(
-            model=model,
+            provider=provider,
             show_thinking=show_thinking,
             max_steps=max_steps,
             registry=registry,
